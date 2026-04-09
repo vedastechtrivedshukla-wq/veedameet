@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: vedameet
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  janus:
+    image: canyan/janus-gateway:latest
+    ports:
+      - "8088:8088" # HTTP API
+      - "8188:8188" # WS/WSS
+      - "10000-10200:10000-10200/udp" # RTP Media Port rules
+    restart: unless-stopped
+    # Depending on requirements, we can bind-mount a customized janus.jcfg and janus.plugin.videoroom.jcfg
+
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MYSQL_SERVER=mysql
+      - REDIS_URL=redis://redis:6379/0
+      - JANUS_API_URL=http://janus:8088/janus
+    depends_on:
+      - mysql
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80" # NGINX exposes 80, map to 5173 for familiar Vite port in demo
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  mysqldata:
