@@ -1,0 +1,15 @@
+fastapi>=0.103.0
+uvicorn[standard]>=0.23.0
+sqlalchemy[asyncio]>=2.0.20
+aiomysql>=0.2.0
+pymysql>=1.1.0 # fallback sync driver if needed
+alembic>=1.12.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+pydantic>=2.3.0
+pydantic-settings>=2.0.3
+redis>=5.0.0
+websockets>=11.0.3
+httpx>=0.24.1
+email-validator>=2.0.0.post2
