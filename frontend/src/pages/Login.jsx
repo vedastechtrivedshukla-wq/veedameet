@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Video } from "lucide-react";
 
 export default function Login() {
@@ -12,6 +12,9 @@ export default function Login() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { login, register } = useAuth();
     const navigate = useNavigate();
+    // Capture where the user was trying to go before being redirected to login
+    const location = useLocation();
+    const from = location.state?.from || "/dashboard";
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -23,7 +26,7 @@ export default function Login() {
             } else {
                 await register(email, password, fullName);
             }
-            navigate("/dashboard");
+            navigate(from, { replace: true });
         } catch (err) {
             const msg =
                 err?.response?.data?.detail ||
@@ -88,11 +91,11 @@ export default function Login() {
                         </div>
                     </div>
 
-                {error && (
-                    <div className="rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 text-sm text-red-700 dark:text-red-400">
-                        {error}
-                    </div>
-                )}
+                    {error && (
+                        <div className="rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 text-sm text-red-700 dark:text-red-400">
+                            {error}
+                        </div>
+                    )}
 
                     <div>
                         <button

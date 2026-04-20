@@ -6,49 +6,64 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: vedameet
-      MYSQL_USER: root
-      MYSQL_PASSWORD: root
     ports:
-      - "3306:3306"
+      - "3307:3306"   # host:container — changed to 3307 to avoid conflict with local MySQL
     volumes:
       - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   janus:
     image: canyan/janus-gateway:latest
     ports:
-      - "8088:8088" # HTTP API
-      - "8188:8188" # WS/WSS
-      - "10000-10200:10000-10200/udp" # RTP Media Port rules
+      - "8088:8088"   # HTTP API
+      - "8188:8188"   # WS/WSS
+      - "10000-10200:10000-10200/udp"  # RTP Media
     restart: unless-stopped
-    # Depending on requirements, we can bind-mount a customized janus.jcfg and janus.plugin.videoroom.jcfg
 
   api:
     build: ./backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
     environment:
       - MYSQL_SERVER=mysql
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DB=vedameet
       - REDIS_URL=redis://redis:6379/0
       - JANUS_API_URL=http://janus:8088/janus
     depends_on:
-      - mysql
-      - redis
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:80" # NGINX exposes 80, map to 5173 for familiar Vite port in demo
+      - "5173:80"   # NGINX exposes 80, mapped to 5173 for dev familiarity
     depends_on:
       - api
     restart: unless-stopped
 
 volumes:
   mysqldata:
+

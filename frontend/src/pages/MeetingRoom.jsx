@@ -64,13 +64,14 @@ export default function MeetingRoom() {
     } = useMeetingStore();
 
     const socketRef = useRef(null);
-    const { isConnected, webrtcRef } = useWebRTC(id, hasJoined ? localStream : null);
+    const { peerManagerRef } = useWebRTC(hasJoined ? id : null, hasJoined ? localStream : null, socketRef, user);
 
     useEffect(() => {
         if (!user) {
-            navigate("/login");
+            // Pass current meeting URL so Login can redirect back after auth
+            navigate("/login", { state: { from: location.pathname }, replace: true });
         }
-    }, [user, navigate]);
+    }, [user, navigate, location.pathname]);
 
     // Fetch meeting info from API to determine host status
     useEffect(() => {
@@ -211,8 +212,8 @@ export default function MeetingRoom() {
             const newVideoTrack = camVideoStream.getVideoTracks()[0];
 
             // Replace the sender track in the existing Janus connection
-            if (webrtcRef.current) {
-                await webrtcRef.current.replaceLocalTrack(
+            if (peerManagerRef.current) {
+                await peerManagerRef.current.replaceLocalTrack(
                     localStream.getVideoTracks()[0],
                     newVideoTrack
                 );
@@ -239,10 +240,9 @@ export default function MeetingRoom() {
                 const screenVideoTrack = displayStream.getVideoTracks()[0];
                 const oldVideoTrack = localStream.getVideoTracks()[0];
 
-                // 1. Replace the WebRTC sender track (does NOT change localStream state,
-                //    so useWebRTC will NOT re-initialize the Janus connection)
-                if (webrtcRef.current && oldVideoTrack && screenVideoTrack) {
-                    await webrtcRef.current.replaceLocalTrack(oldVideoTrack, screenVideoTrack);
+                // Replace track via PeerManager (direct P2P)
+                if (peerManagerRef.current && oldVideoTrack && screenVideoTrack) {
+                    await peerManagerRef.current.replaceLocalTrack(oldVideoTrack, screenVideoTrack);
                 }
 
                 // 2. Stop the old camera video track so the camera light turns off

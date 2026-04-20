@@ -1,5 +1,38 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { User } from "lucide-react";
+
+/** Attaches srcObject to a video/audio ref and plays it. */
+function MediaElement({ stream, muted = false, mirror = false, className = "" }) {
+    const ref = useRef(null);
+    useEffect(() => {
+        if (!ref.current || !stream) return;
+        if (ref.current.srcObject !== stream) {
+            ref.current.srcObject = stream;
+            ref.current.play().catch(() => { });
+        }
+    }, [stream]);
+
+    const hasVideo = stream && stream.getVideoTracks().length > 0;
+    const hasAudio = stream && stream.getAudioTracks().length > 0;
+
+    if (hasVideo) {
+        return (
+            <video
+                ref={ref}
+                className={className}
+                style={mirror ? { transform: "scaleX(-1)" } : {}}
+                autoPlay
+                playsInline
+                muted={muted}
+            />
+        );
+    }
+    // Audio-only stream → hidden audio element, show avatar
+    if (hasAudio) {
+        return <audio ref={ref} autoPlay playsInline style={{ display: "none" }} />;
+    }
+    return null;
+}
 
 export default function VideoGrid({ participants, localStream, isVideoOn, isMicOn, isScreenSharing }) {
     // Filter out the local participant so they don't render twice (since we render Self manually below)
@@ -16,17 +49,11 @@ export default function VideoGrid({ participants, localStream, isVideoOn, isMicO
             {/* Local Participant (Self) */}
             <div className="relative bg-zinc-800 rounded-2xl overflow-hidden shadow-lg border border-zinc-700 flex flex-col justify-center items-center h-full w-full">
                 {isVideoOn && localStream ? (
-                    <video
+                    <MediaElement
+                        stream={localStream}
+                        muted={true}
+                        mirror={!isScreenSharing}
                         className="w-full h-full object-cover"
-                        style={{ transform: isScreenSharing ? "none" : "scaleX(-1)" }}
-                        autoPlay
-                        playsInline
-                        muted
-                        ref={video => {
-                            if (video && video.srcObject !== localStream) {
-                                video.srcObject = localStream;
-                            }
-                        }}
                     />
                 ) : (
                     <div className="flex items-center justify-center w-24 h-24 bg-zinc-700 rounded-full text-zinc-400">
@@ -39,29 +66,31 @@ export default function VideoGrid({ participants, localStream, isVideoOn, isMicO
             </div>
 
             {/* Remote Participants */}
-            {remoteParticipants.map((p) => (
-                <div key={p.id} className="relative bg-zinc-800 rounded-2xl overflow-hidden shadow-lg border border-zinc-700 flex flex-col justify-center items-center h-full w-full">
-                    {p.stream ? (
-                        <video
-                            className="w-full h-full object-cover"
-                            autoPlay
-                            playsInline
-                            ref={video => {
-                                if (video && video.srcObject !== p.stream) {
-                                    video.srcObject = p.stream;
-                                }
-                            }}
-                        />
-                    ) : (
-                        <div className="flex items-center justify-center w-24 h-24 bg-zinc-700 rounded-full text-zinc-400">
-                            <User size={48} />
+            {remoteParticipants.map((p) => {
+                const hasVideo = p.stream && p.stream.getVideoTracks().length > 0;
+                return (
+                    <div key={p.id} className="relative bg-zinc-800 rounded-2xl overflow-hidden shadow-lg border border-zinc-700 flex flex-col justify-center items-center h-full w-full">
+                        {hasVideo ? (
+                            <MediaElement
+                                stream={p.stream}
+                                muted={false}
+                                className="w-full h-full object-cover"
+                            />
+                        ) : (
+                            <>
+                                {/* Render hidden audio even with no video */}
+                                {p.stream && <MediaElement stream={p.stream} muted={false} />}
+                                <div className="flex items-center justify-center w-24 h-24 bg-zinc-700 rounded-full text-zinc-400">
+                                    <User size={48} />
+                                </div>
+                            </>
+                        )}
+                        <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/10 text-white text-sm font-medium z-10">
+                            {p.name}
                         </div>
-                    )}
-                    <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/10 text-white text-sm font-medium z-10">
-                        {p.name}
                     </div>
-                </div>
-            ))}
+                );
+            })}
         </div>
     );
 }
