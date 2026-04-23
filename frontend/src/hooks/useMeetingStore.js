@@ -15,6 +15,11 @@ export const useMeetingStore = create((set, get) => ({
     addParticipant: (p) => set((state) => ({
         participants: [...state.participants.filter(x => x.id !== p.id), p]
     })),
+    updateParticipant: (id, updates) => set((state) => ({
+        participants: state.participants.map(p =>
+            String(p.id) === String(id) ? { ...p, ...updates } : p
+        )
+    })),
     removeParticipant: (id) => set((state) => ({
         participants: state.participants.filter(p => p.id !== id)
     })),

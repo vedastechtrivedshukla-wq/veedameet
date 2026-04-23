@@ -7,11 +7,11 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: vedameet
     ports:
-      - "3307:3306"   # host:container — changed to 3307 to avoid conflict with local MySQL
+      - "3307:3306" # host:container — changed to 3307 to avoid conflict with local MySQL
     volumes:
       - mysqldata:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,9 +31,9 @@ services:
   janus:
     image: canyan/janus-gateway:latest
     ports:
-      - "8088:8088"   # HTTP API
-      - "8188:8188"   # WS/WSS
-      - "10000-10200:10000-10200/udp"  # RTP Media
+      - "8088:8088" # HTTP API
+      - "8188:8188" # WS/WSS
+      - "10000-10200:10000-10200/udp" # RTP Media
     restart: unless-stopped
 
   api:
@@ -59,11 +59,12 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:80"   # NGINX exposes 80, mapped to 5173 for dev familiarity
+      - "5173:80" # NGINX exposes 80, mapped to 5173 for dev familiarity
     depends_on:
       - api
     restart: unless-stopped
 
 volumes:
   mysqldata:
+
 

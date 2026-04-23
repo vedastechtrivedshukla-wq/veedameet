@@ -40,11 +40,23 @@ async def meeting_websocket(websocket: WebSocket, meeting_id: str, token: str = 
         await websocket.close(code=1008)
         return
         
-    await manager.connect(websocket, meeting_id)
+    await manager.connect(websocket, meeting_id, user)
     
-    # 2. Handle incoming client messages directly (No Redis needed for local single-process dev)
+    # 2. Handle incoming client messages
     try:
-        # Notify all participants that this user has joined (with their real info)
+        # A. Send the current participant list to the JUST JOINED user
+        # This ensures they know about the host and others already in the room
+        participants = manager.get_participants(meeting_id)
+        # Filter out self-info to avoid redundancy
+        others = [p for p in participants if p["id"] != user["id"]]
+        
+        await websocket.send_text(json.dumps({
+            "event": "participant_list",
+            "participants": others,
+            "meeting_id": meeting_id
+        }))
+
+        # B. Notify all participants that this user has joined
         join_msg = {
             "event": "user_joined",
             "user_id": user["id"],

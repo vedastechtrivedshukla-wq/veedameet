@@ -58,13 +58,14 @@ export default function MeetingRoom() {
         setScreenShare,
         addMessage,
         addParticipant,
+        updateParticipant,
         removeParticipant,
         resetParticipants,
         resetMessages,
     } = useMeetingStore();
 
-    const socketRef = useRef(null);
-    const { peerManagerRef } = useWebRTC(hasJoined ? id : null, hasJoined ? localStream : null, socketRef, user);
+    const [socketService, setSocketService] = useState(null);
+    const { peerManagerRef } = useWebRTC(hasJoined ? id : null, hasJoined ? localStream : null, socketService, user);
 
     useEffect(() => {
         if (!user) {
@@ -130,7 +131,8 @@ export default function MeetingRoom() {
         if (!user || !hasJoined) return;
 
         const token = localStorage.getItem("token");
-        socketRef.current = new SocketService(id, token);
+        const newSocket = new SocketService(id, token);
+        setSocketService(newSocket);
 
         // Add the local user to the participants list immediately
         addParticipant({ id: user.id, name: user.name, email: user.email, isLocal: true });
@@ -141,8 +143,21 @@ export default function MeetingRoom() {
             toastTimerRef.current = setTimeout(() => setJoinToast(null), 4000);
         };
 
+        // When joining, receive the list of everyone already in the room (e.g. the host)
+        newSocket.on("participant_list", (data) => {
+            console.log("[Socket] Received participant list:", data.participants);
+            data.participants.forEach(p => {
+                addParticipant({
+                    id: p.id,
+                    name: p.name,
+                    email: p.email,
+                    isLocal: false,
+                });
+            });
+        });
+
         // When another user joins the meeting
-        socketRef.current.on("user_joined", (data) => {
+        newSocket.on("user_joined", (data) => {
             if (data.user_id !== user.id) {
                 const name = data.user_name || data.user_email || `User ${data.user_id}`;
                 addParticipant({
@@ -156,7 +171,7 @@ export default function MeetingRoom() {
         });
 
         // When another user leaves the meeting
-        socketRef.current.on("user_left", (data) => {
+        newSocket.on("user_left", (data) => {
             if (data.user_id !== user.id) {
                 const leaving = participants.find(p => p.id === data.user_id);
                 removeParticipant(data.user_id);
@@ -164,7 +179,7 @@ export default function MeetingRoom() {
             }
         });
 
-        socketRef.current.on("chat_message", (data) => {
+        newSocket.on("chat_message", (data) => {
             addMessage({
                 senderId: data.sender_id,
                 senderName: data.sender_name || "Unknown",
@@ -173,28 +188,56 @@ export default function MeetingRoom() {
             });
         });
 
-        socketRef.current.connect();
+        // Sync remote participant camera/mic state
+        newSocket.on("media_state", (data) => {
+            if (data.user_id !== user.id) {
+                updateParticipant(data.user_id, {
+                    isVideoOn: data.video,
+                    isMicOn: data.mic,
+                });
+            }
+        });
+
+        newSocket.connect();
 
         return () => {
-            if (socketRef.current) socketRef.current.disconnect();
+            newSocket.disconnect();
+            setSocketService(null);
             // Remove the local user when they leave
             removeParticipant(user.id);
         };
     }, [id, user, hasJoined]);
 
     const handleToggleMic = () => {
+        const newMicState = !isMicOn;
         if (localStream) {
-            localStream.getAudioTracks().forEach(track => track.enabled = !isMicOn);
+            localStream.getAudioTracks().forEach(track => track.enabled = newMicState);
         }
-        setMic(!isMicOn);
-        // TODO: Send mute signal via WS or WebRTC metadata
+        setMic(newMicState);
+        // Broadcast mic state so others can see mute icon
+        if (socketService) {
+            socketService.send("media_state", {
+                user_id: user.id,
+                video: isVideoOn,
+                mic: newMicState,
+            });
+        }
     };
 
     const handleToggleVideo = () => {
+        const newVideoState = !isVideoOn;
         if (localStream) {
-            localStream.getVideoTracks().forEach(track => track.enabled = !isVideoOn);
+            localStream.getVideoTracks().forEach(track => track.enabled = newVideoState);
         }
-        setVideo(!isVideoOn);
+        setVideo(newVideoState);
+        // Broadcast video state so others show/hide avatar correctly
+        if (socketService) {
+            socketService.send("media_state", {
+                user_id: user.id,
+                video: newVideoState,
+                mic: isMicOn,
+            });
+        }
     };
 
     const stopScreenStream = () => {
@@ -213,17 +256,24 @@ export default function MeetingRoom() {
 
             // Replace the sender track in the existing Janus connection
             if (peerManagerRef.current) {
-                await peerManagerRef.current.replaceLocalTrack(
-                    localStream.getVideoTracks()[0],
-                    newVideoTrack
-                );
+                const oldVideoTrack = localStream ? localStream.getVideoTracks()[0] : null;
+                if (oldVideoTrack) {
+                    await peerManagerRef.current.replaceLocalTrack(oldVideoTrack, newVideoTrack);
+                } else {
+                    await peerManagerRef.current.addLocalTrack(newVideoTrack);
+                }
             }
 
             // Splice the new video track into localStream (keep the live audio track)
-            localStream.getVideoTracks().forEach(t => { t.stop(); localStream.removeTrack(t); });
-            localStream.addTrack(newVideoTrack);
+            if (!localStream) {
+                setLocalStream(new MediaStream([newVideoTrack]));
+                setPreviewStream(new MediaStream([newVideoTrack]));
+            } else {
+                localStream.getVideoTracks().forEach(t => { t.stop(); localStream.removeTrack(t); });
+                localStream.addTrack(newVideoTrack);
+                setPreviewStream(localStream); // show camera in local tile again
+            }
 
-            setPreviewStream(localStream); // show camera in local tile again
             setScreenShare(false);
         } catch (e) {
             console.error("Failed to restore camera after screen share", e);
@@ -238,15 +288,16 @@ export default function MeetingRoom() {
                 screenStreamRef.current = displayStream;
 
                 const screenVideoTrack = displayStream.getVideoTracks()[0];
-                const oldVideoTrack = localStream.getVideoTracks()[0];
+                const oldVideoTrack = localStream ? localStream.getVideoTracks()[0] : null;
 
-                // Replace track via PeerManager (direct P2P)
-                if (peerManagerRef.current && oldVideoTrack && screenVideoTrack) {
-                    await peerManagerRef.current.replaceLocalTrack(oldVideoTrack, screenVideoTrack);
+                if (peerManagerRef.current && screenVideoTrack) {
+                    if (oldVideoTrack) {
+                        await peerManagerRef.current.replaceLocalTrack(oldVideoTrack, screenVideoTrack);
+                        oldVideoTrack.stop(); // Stop the old camera video track so the camera light turns off
+                    } else {
+                        await peerManagerRef.current.addLocalTrack(screenVideoTrack);
+                    }
                 }
-
-                // 2. Stop the old camera video track so the camera light turns off
-                if (oldVideoTrack) oldVideoTrack.stop();
 
                 // 3. Only update the preview stream — localStream itself stays the same
                 setPreviewStream(displayStream);
@@ -352,7 +403,7 @@ export default function MeetingRoom() {
 
     const handleLeave = () => {
         // Teardown WebRTC & WS
-        if (socketRef.current) socketRef.current.disconnect();
+        if (socketService) socketService.disconnect();
         navigate("/dashboard");
     };
 
@@ -365,8 +416,8 @@ export default function MeetingRoom() {
         });
 
         // Broadcast via WS
-        if (socketRef.current) {
-            socketRef.current.send("chat_message", {
+        if (socketService) {
+            socketService.send("chat_message", {
                 message: text,
                 sender_name: user?.name,
             });

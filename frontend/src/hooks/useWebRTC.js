@@ -8,28 +8,37 @@ import { PeerManager } from "../services/peerManager";
  *
  * @param {string}      meetingId    - Current meeting short-id
  * @param {MediaStream} localStream  - Local camera/mic stream (null before joined)
- * @param {object}      socketRef    - Ref to the connected SocketService instance
+ * @param {object}      socketService - Connected SocketService instance
  * @param {object}      user         - Current authenticated user { id, name, email }
  */
-export function useWebRTC(meetingId, localStream, socketRef, user) {
-    const { addParticipant, removeParticipant } = useMeetingStore();
+export function useWebRTC(meetingId, localStream, socketService, user) {
+    const { updateParticipant, removeParticipant } = useMeetingStore();
     const peerManagerRef = useRef(null);
+
+    // Keep a ref to the latest localStream so PeerManager can access it
+    // without needing to recreate the whole connection when it changes.
+    const localStreamRef = useRef(localStream);
+
+    // Sync the ref whenever the stream changes, and push it into an existing PeerManager
+    useEffect(() => {
+        localStreamRef.current = localStream;
+        if (peerManagerRef.current && localStream) {
+            peerManagerRef.current.updateLocalStream(localStream);
+        }
+    }, [localStream]);
 
     useEffect(() => {
         // Only activate when the user has joined and we have all needed refs
-        if (!localStream || !meetingId || !socketRef?.current || !user) return;
+        if (!meetingId || !socketService || !user) return;
 
         const pm = new PeerManager(
             user.id,
-            localStream,
-            socketRef.current,
+            localStreamRef.current, // use the ref value at creation time
+            socketService,
             {
                 onRemoteStream: (userId, stream) => {
                     console.log("[useWebRTC] Remote stream received from", userId);
-                    // Update (or add) the participant with their live stream
-                    addParticipant({
-                        id: userId,
-                        name: `User ${userId}`,
+                    updateParticipant(userId, {
                         stream,
                         isMicOn: true,
                         isVideoOn: true,
@@ -54,14 +63,16 @@ export function useWebRTC(meetingId, localStream, socketRef, user) {
             }
         };
 
-        socketRef.current.on("user_joined", handleUserJoined);
+        socketService.on("user_joined", handleUserJoined);
 
         return () => {
             pm.stop();
             peerManagerRef.current = null;
         };
+        // NOTE: localStream is intentionally excluded — we handle it via the ref above
+        // to avoid tearing down all peer connections every time the stream object changes.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meetingId, localStream, user]);
+    }, [meetingId, user, socketService]);
 
     return { peerManagerRef };
 }

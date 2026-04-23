@@ -29,21 +29,30 @@ export class PeerManager {
 
         // Map<remoteUserId, RTCPeerConnection>
         this.peers = new Map();
-        // Map<remoteUserId, HTMLAudioElement>  — keeps remote audio alive
-        this.audioEls = new Map();
 
-        this._boundOnOffer    = this._onOffer.bind(this);
-        this._boundOnAnswer   = this._onAnswer.bind(this);
-        this._boundOnIce      = this._onIceCandidate.bind(this);
+        this._boundOnOffer = this._onOffer.bind(this);
+        this._boundOnAnswer = this._onAnswer.bind(this);
+        this._boundOnIce = this._onIceCandidate.bind(this);
         this._boundOnUserLeft = this._onUserLeft.bind(this);
     }
 
     /** Call once after creating this instance, before anyone else joins. */
     start() {
-        this.socket.on("webrtc_offer",  this._boundOnOffer);
+        this.socket.on("webrtc_offer", this._boundOnOffer);
         this.socket.on("webrtc_answer", this._boundOnAnswer);
-        this.socket.on("webrtc_ice",    this._boundOnIce);
-        this.socket.on("user_left",     this._boundOnUserLeft);
+        this.socket.on("webrtc_ice", this._boundOnIce);
+        this.socket.on("user_left", this._boundOnUserLeft);
+    }
+
+    /**
+     * Update the local stream (e.g. when camera becomes available after PeerManager
+     * was already created). Adds any missing tracks to all existing peer connections.
+     */
+    updateLocalStream(newStream) {
+        this.localStream = newStream;
+        for (const [remoteUserId, pc] of this.peers.entries()) {
+            this._addLocalTracksIfMissing(pc, remoteUserId);
+        }
     }
 
     /**
@@ -71,9 +80,62 @@ export class PeerManager {
 
     /** Replace a local track in all active peer connections (e.g. screen share swap). */
     async replaceLocalTrack(oldTrack, newTrack) {
-        for (const pc of this.peers.values()) {
+        // 1. Update the persistent localStream so future peers get the new track
+        if (this.localStream) {
+            if (oldTrack) {
+                try { this.localStream.removeTrack(oldTrack); } catch (e) { }
+            }
+            if (newTrack) {
+                try { this.localStream.addTrack(newTrack); } catch (e) { }
+            }
+        }
+
+        // 2. Replace the track in existing peer connections and renegotiate
+        for (const [remoteUserId, pc] of this.peers.entries()) {
             const sender = pc.getSenders().find(s => s.track?.kind === newTrack.kind);
-            if (sender) await sender.replaceTrack(newTrack);
+            if (sender) {
+                try {
+                    await sender.replaceTrack(newTrack);
+
+                    // Force renegotiation to ensure remote video element receives new dimensions/codec
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    this.socket.send("webrtc_offer", {
+                        to: remoteUserId,
+                        from: this.myUserId,
+                        sdp: offer,
+                    });
+                } catch (e) {
+                    console.warn(`[PeerManager] Failed to replace track for ${remoteUserId}`, e);
+                }
+            }
+        }
+    }
+
+    /** Add a local track to all active peer connections (e.g. screen share when camera was off). */
+    async addLocalTrack(newTrack) {
+        // 1. Initialize or update localStream
+        if (!this.localStream) {
+            this.localStream = new MediaStream();
+        }
+        try { this.localStream.addTrack(newTrack); } catch (e) { }
+
+        // 2. Add track to existing peer connections and renegotiate
+        for (const [remoteUserId, pc] of this.peers.entries()) {
+            try {
+                pc.addTrack(newTrack, this.localStream);
+
+                // Force renegotiation
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                this.socket.send("webrtc_offer", {
+                    to: remoteUserId,
+                    from: this.myUserId,
+                    sdp: offer,
+                });
+            } catch (e) {
+                console.warn(`[PeerManager] Failed to add track for ${remoteUserId}`, e);
+            }
         }
     }
 
@@ -81,9 +143,6 @@ export class PeerManager {
     stop() {
         for (const pc of this.peers.values()) pc.close();
         this.peers.clear();
-
-        for (const el of this.audioEls.values()) el.remove();
-        this.audioEls.clear();
     }
 
     // ─── Private ────────────────────────────────────────────────────────────
@@ -103,15 +162,17 @@ export class PeerManager {
 
         pc.ontrack = (e) => {
             console.log(`[PeerManager] Got track from ${remoteUserId}:`, e.track.kind);
-            const stream = e.streams?.[0] || new MediaStream([e.track]);
 
-            // Play audio via a hidden element — required for audio-only or mixed streams
-            if (e.track.kind === "audio") {
-                this._ensureAudioElement(remoteUserId, stream);
-            }
+            // Collect tracks in a persistent array or stream
+            if (!pc._remoteStream) pc._remoteStream = new MediaStream();
+            pc._remoteStream.addTrack(e.track);
+
+            // Create a completely NEW MediaStream object so React detects the reference change
+            const newStream = new MediaStream(pc._remoteStream.getTracks());
+            pc._remoteStream = newStream;
 
             if (this.callbacks?.onRemoteStream) {
-                this.callbacks.onRemoteStream(remoteUserId, stream);
+                this.callbacks.onRemoteStream(remoteUserId, newStream);
             }
         };
 
@@ -125,36 +186,50 @@ export class PeerManager {
         return pc;
     }
 
+    /** Add all local tracks to a peer connection (skips kinds already present). */
     _addLocalTracks(pc) {
         if (!this.localStream) return;
+        const existingKinds = new Set(pc.getSenders().map(s => s.track?.kind).filter(Boolean));
         this.localStream.getTracks().forEach(track => {
-            pc.addTrack(track, this.localStream);
+            if (!existingKinds.has(track.kind)) {
+                pc.addTrack(track, this.localStream);
+            }
         });
     }
 
-    /** Creates (or reuses) a hidden <audio> element to play remote audio. */
-    _ensureAudioElement(userId, stream) {
-        let el = this.audioEls.get(userId);
-        if (!el) {
-            el = document.createElement("audio");
-            el.autoplay = true;
-            el.setAttribute("playsinline", "");
-            el.style.display = "none";
-            document.body.appendChild(el);
-            this.audioEls.set(userId, el);
-        }
-        if (el.srcObject !== stream) {
-            el.srcObject = stream;
-            el.play().catch(err => console.warn("[PeerManager] Audio autoplay blocked:", err));
+    /**
+     * Add any tracks from localStream that are not yet in the peer connection,
+     * then renegotiate if new tracks were added.
+     */
+    async _addLocalTracksIfMissing(pc, remoteUserId) {
+        if (!this.localStream) return;
+        const existingKinds = new Set(pc.getSenders().map(s => s.track?.kind).filter(Boolean));
+        let addedAny = false;
+        this.localStream.getTracks().forEach(track => {
+            if (!existingKinds.has(track.kind)) {
+                pc.addTrack(track, this.localStream);
+                addedAny = true;
+            }
+        });
+
+        if (addedAny && pc.signalingState !== "closed") {
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                this.socket.send("webrtc_offer", {
+                    to: remoteUserId,
+                    from: this.myUserId,
+                    sdp: offer,
+                });
+            } catch (e) {
+                console.warn(`[PeerManager] Renegotiation after late track add failed for ${remoteUserId}`, e);
+            }
         }
     }
 
     _cleanupPeer(remoteUserId) {
         const pc = this.peers.get(remoteUserId);
         if (pc) { pc.close(); this.peers.delete(remoteUserId); }
-
-        const el = this.audioEls.get(remoteUserId);
-        if (el) { el.remove(); this.audioEls.delete(remoteUserId); }
 
         if (this.callbacks?.onRemoteStreamRemoved) {
             this.callbacks.onRemoteStreamRemoved(remoteUserId);
@@ -171,7 +246,17 @@ export class PeerManager {
         if (!pc) {
             pc = this._createPeerConnection(fromId);
             this.peers.set(fromId, pc);
-            this._addLocalTracks(pc);
+        }
+
+        // Add local tracks now. If localStream isn't ready yet, retry once after 300 ms
+        // so the participant's camera also reaches the host.
+        this._addLocalTracks(pc);
+        if (!this.localStream) {
+            setTimeout(() => {
+                if (this.localStream) {
+                    this._addLocalTracksIfMissing(pc, fromId);
+                }
+            }, 300);
         }
 
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
