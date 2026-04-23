@@ -1,8 +1,11 @@
 import uuid
 import random
 import string
+import os
+import shutil
+from datetime import datetime
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -88,3 +91,27 @@ async def end_meeting(
     await db.commit()
     await db.refresh(meeting)
     return meeting
+
+@router.post("/{meeting_id}/recordings")
+async def upload_recording(
+    meeting_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(deps.get_current_user)
+) -> Any:
+    """Upload a meeting recording."""
+    # Create uploads directory if it doesn't exist
+    upload_dir = os.path.join(os.getcwd(), "uploads", "recordings")
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{meeting_id}_{timestamp}.webm"
+    file_path = os.path.join(upload_dir, filename)
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not save recording: {e}")
+        
+    return {"message": "Recording uploaded successfully", "filename": filename}
+

@@ -363,18 +363,21 @@ export default function MeetingRoom() {
                     }
                 };
 
-                mediaRecorder.onstop = () => {
+                mediaRecorder.onstop = async () => {
                     const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-                    const url = URL.createObjectURL(blob);
+                    const filename = `vedameet-recording-${new Date().getTime()}.webm`;
+                    
+                    const formData = new FormData();
+                    formData.append("file", blob, filename);
+                    
+                    try {
+                        await meetingsApi.uploadRecording(id, formData);
+                        alert("Recording successfully saved to the server!");
+                    } catch (error) {
+                        console.error("Failed to upload recording", error);
+                        alert("Failed to upload recording to the server.");
+                    }
 
-                    const a = document.createElement('a');
-                    document.body.appendChild(a);
-                    a.style = 'display: none';
-                    a.href = url;
-                    a.download = `vedameet-recording-${new Date().getTime()}.webm`;
-                    a.click();
-
-                    window.URL.revokeObjectURL(url);
                     displayStream.getTracks().forEach(track => track.stop());
                     audioContext.close();
                     setIsRecording(false);

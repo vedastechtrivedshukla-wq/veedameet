@@ -31,6 +31,11 @@ export const meetings = {
     create: (title) => api.post("/meetings/", { title }),
     get: (meeting_id) => api.get(`/meetings/${meeting_id}`),
     end: (meeting_id) => api.put(`/meetings/${meeting_id}/end`),
+    uploadRecording: (meeting_id, formData) => api.post(`/meetings/${meeting_id}/recordings`, formData, {
+        headers: {
+            "Content-Type": "multipart/form-data"
+        }
+    }),
 };
 
 export default api;
