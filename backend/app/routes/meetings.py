@@ -16,6 +16,7 @@ from app.models.user import User
 from app.api import deps
 from app.schemas.meeting import MeetingCreate, MeetingResponse, MeetingParticipantResponse
 from app.services.janus import janus_client
+from app.services.gcs import upload_file_to_gcs
 
 router = APIRouter()
 
@@ -99,19 +100,18 @@ async def upload_recording(
     current_user: User = Depends(deps.get_current_user)
 ) -> Any:
     """Upload a meeting recording."""
-    # Create uploads directory if it doesn't exist
-    upload_dir = os.path.join(os.getcwd(), "uploads", "recordings")
-    os.makedirs(upload_dir, exist_ok=True)
-    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{meeting_id}_{timestamp}.webm"
-    file_path = os.path.join(upload_dir, filename)
+    destination_blob_name = f"recordings/{filename}"
     
+    # Upload directly to Google Cloud Storage
+    # file.file is a SpooledTemporaryFile which is a file-like object
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        gcs_url = upload_file_to_gcs(file.file, destination_blob_name, content_type=file.content_type or "video/webm")
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not save recording: {e}")
         
-    return {"message": "Recording uploaded successfully", "filename": filename}
+    return {"message": "Recording uploaded successfully", "filename": filename, "url": gcs_url}
 

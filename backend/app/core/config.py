@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     JANUS_API_URL: str = "http://localhost:8088/janus"
 
+    # Google Cloud Storage Configuration
+    GCS_BUCKET_NAME: Optional[str] = None
+    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
+
     @property
     def sync_database_url(self) -> str:
         """Sync URL – without SSL params (SSL will be handled via connect_args)"""
