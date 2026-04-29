@@ -18,7 +18,7 @@ app.add_middleware(
 import sqlalchemy
 from app.database import engine, Base, settings
 from app.models.user import User
-from app.models.meeting import Meeting
+from app.models.meeting import Meeting, AudioTrack
 
 @app.on_event("startup")
 async def startup_event():

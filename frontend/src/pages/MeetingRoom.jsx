@@ -40,6 +40,8 @@ export default function MeetingRoom() {
     const [copied, setCopied] = useState(false);
     const [joinToast, setJoinToast] = useState(null); // { name, type: 'joined'|'left' }
     const toastTimerRef = useRef(null);
+    const [recordingToast, setRecordingToast] = useState(null);
+    const recordingToastTimerRef = useRef(null);
 
     // Recording State
     const [isRecording, setIsRecording] = useState(false);
@@ -186,6 +188,13 @@ export default function MeetingRoom() {
                 text: data.message,
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             });
+        });
+
+        // When host starts recording
+        newSocket.on("recording_started", (data) => {
+            if (recordingToastTimerRef.current) clearTimeout(recordingToastTimerRef.current);
+            setRecordingToast(data.message);
+            recordingToastTimerRef.current = setTimeout(() => setRecordingToast(null), 5000);
         });
 
         // Sync remote participant camera/mic state
@@ -392,6 +401,11 @@ export default function MeetingRoom() {
                 mediaRecorder.start();
                 mediaRecorderRef.current = mediaRecorder;
                 setIsRecording(true);
+                
+                // Notify others that recording has started
+                meetingsApi.notifyRecordingStart(id).catch(err => {
+                    console.error("Could not send recording notification", err);
+                });
             } catch (err) {
                 console.error("Error starting recording:", err);
                 alert("Could not start recording: " + err.message);
@@ -524,6 +538,21 @@ export default function MeetingRoom() {
                     </span>
                     <button onClick={() => setJoinToast(null)} className="ml-1 text-zinc-400 hover:text-white">
                         <X size={14} />
+                    </button>
+                </div>
+            )}
+
+            {/* Recording Notification Toast */}
+            {recordingToast && (
+                <div
+                    className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 bg-red-900 border border-red-700 text-white px-5 py-3 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-3 duration-300"
+                >
+                    <div className="p-1.5 rounded-full bg-red-500/20 animate-pulse">
+                        <div className="w-3 h-3 bg-red-500 rounded-full" />
+                    </div>
+                    <span className="text-sm font-medium">{recordingToast}</span>
+                    <button onClick={() => setRecordingToast(null)} className="ml-2 text-red-200 hover:text-white transition-colors">
+                        <X size={16} />
                     </button>
                 </div>
             )}

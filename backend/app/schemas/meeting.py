@@ -32,3 +32,14 @@ class MeetingParticipantResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class AudioTrackResponse(BaseModel):
+    id: int
+    meeting_id: int
+    user_id: int
+    gcs_url: str
+    created_at: datetime
+    user: Optional[UserResponse] = None
+
+    class Config:
+        from_attributes = True

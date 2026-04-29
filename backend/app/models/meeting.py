@@ -29,3 +29,15 @@ class MeetingParticipant(Base):
 
     user = relationship("User")
     meeting = relationship("Meeting")
+
+class AudioTrack(Base):
+    __tablename__ = "audio_tracks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    gcs_url = Column(String(512), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    meeting = relationship("Meeting")
+    user = relationship("User")

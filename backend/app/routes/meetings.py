@@ -11,10 +11,10 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.meeting import Meeting, MeetingParticipant
+from app.models.meeting import Meeting, MeetingParticipant, AudioTrack
 from app.models.user import User
 from app.api import deps
-from app.schemas.meeting import MeetingCreate, MeetingResponse, MeetingParticipantResponse
+from app.schemas.meeting import MeetingCreate, MeetingResponse, MeetingParticipantResponse, AudioTrackResponse
 from app.services.janus import janus_client
 from app.services.gcs import upload_file_to_gcs
 
@@ -115,3 +115,73 @@ async def upload_recording(
         
     return {"message": "Recording uploaded successfully", "filename": filename, "url": gcs_url}
 
+@router.post("/{meeting_id}/audio-tracks", response_model=AudioTrackResponse)
+async def upload_audio_track(
+    meeting_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user)
+) -> Any:
+    """Upload an individual participant's audio track."""
+    # First verify the meeting exists
+    result = await db.execute(select(Meeting).filter(Meeting.meeting_id == meeting_id))
+    meeting = result.scalars().first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    extension = ".webm"
+    if file.filename and "." in file.filename:
+        extension = f".{file.filename.split('.')[-1]}"
+        
+    filename = f"user_{current_user.id}_{timestamp}{extension}"
+    destination_blob_name = f"recordings/{meeting_id}/audio_tracks/{filename}"
+    
+    try:
+        gcs_url = upload_file_to_gcs(file.file, destination_blob_name, content_type=file.content_type or "audio/webm")
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not save audio track: {e}")
+        
+    audio_track = AudioTrack(
+        meeting_id=meeting.id,
+        user_id=current_user.id,
+        gcs_url=gcs_url
+    )
+    db.add(audio_track)
+    await db.commit()
+    await db.refresh(audio_track)
+    
+    # Reload with user relationship for response
+    track_result = await db.execute(
+        select(AudioTrack).options(selectinload(AudioTrack.user)).filter(AudioTrack.id == audio_track.id)
+    )
+    
+    return track_result.scalars().first()
+
+@router.post("/{meeting_id}/notify-recording-start")
+async def notify_recording_start(
+    meeting_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user)
+) -> Any:
+    """Notify participants that the host has started recording."""
+    result = await db.execute(select(Meeting).filter(Meeting.meeting_id == meeting_id))
+    meeting = result.scalars().first()
+    
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+        
+    if meeting.host_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the host can start recording")
+        
+    # Broadcast the notification via WebSocket
+    from app.websockets.connection_manager import manager
+    host_name = current_user.full_name or current_user.email
+    await manager.broadcast_to_meeting(meeting_id, {
+        "event": "recording_started",
+        "message": f"{host_name} has started recording."
+    })
+    
+    return {"message": "Recording notification sent to participants"}

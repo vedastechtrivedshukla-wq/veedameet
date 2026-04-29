@@ -36,6 +36,7 @@ export const meetings = {
             "Content-Type": "multipart/form-data"
         }
     }),
+    notifyRecordingStart: (meeting_id) => api.post(`/meetings/${meeting_id}/notify-recording-start`),
 };
 
 export default api;

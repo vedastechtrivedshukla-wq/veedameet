@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { meetings as meetingsApi } from "@/services/api";
 import { Video, Keyboard, PlusSquare, Link as LinkIcon, Plus, Copy, Check } from "lucide-react";
 
 export default function Dashboard() {
@@ -29,16 +30,26 @@ export default function Dashboard() {
         return Math.random().toString(36).substring(2, 11);
     };
 
-    const handleStartInstantMeeting = () => {
-        const shortId = generateRandomId();
-        navigate(`/meeting/${shortId}`, { state: { isInstantMeeting: true } });
+    const handleStartInstantMeeting = async () => {
+        try {
+            const res = await meetingsApi.create("Instant Meeting");
+            navigate(`/meeting/${res.data.meeting_id}`, { state: { isInstantMeeting: true } });
+        } catch (error) {
+            console.error("Failed to create meeting", error);
+            alert("Could not create meeting. Please try again.");
+        }
     };
 
-    const handleCreateForLater = () => {
-        const shortId = generateRandomId();
-        const meetingUrl = `${window.location.origin}/meeting/${shortId}`;
-        setGeneratedLink(meetingUrl);
-        setIsNewMeetingDropdownOpen(false);
+    const handleCreateForLater = async () => {
+        try {
+            const res = await meetingsApi.create("Scheduled Meeting");
+            const meetingUrl = `${window.location.origin}/meeting/${res.data.meeting_id}`;
+            setGeneratedLink(meetingUrl);
+            setIsNewMeetingDropdownOpen(false);
+        } catch (error) {
+            console.error("Failed to create meeting", error);
+            alert("Could not create meeting. Please try again.");
+        }
     };
 
     const handleCopyLink = () => {
